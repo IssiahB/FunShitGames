@@ -1,5 +1,12 @@
 import { Game, Review, PricingPlan } from '@/types/game';
 
+import CreekImage from '@/assets/images/games/shits-creek.webp';
+import DeuceImage from '@/assets/images/games/deuce-drop.png';
+import OcrapsImage from '@/assets/images/games/ocraps.png';
+import ShitGoImage from '@/assets/images/games/shit-go.png';
+import ShitoImage from '@/assets/images/games/shito.png';
+import SlangingShitImage from '@/assets/images/games/slang-shit.png';
+
 export const games: Game[] = [
   {
     id: 'up-shitz-creek',
@@ -7,7 +14,7 @@ export const games: Game[] = [
     name: 'Up Shitz Creek',
     tagline: 'Navigate the chaos without a paddle!',
     description: 'A hilarious board game where players race through treacherous waters, avoiding obstacles and sabotaging opponents to reach safety first.',
-    image: 'https://d64gsuwffb70l.cloudfront.net/692bcf0e39ef29fa4b4a1d04_1764522210013_8894bae6.webp',
+    image: CreekImage,
     players: '2-6',
     playTime: '45-60 min',
     age: '17+',
@@ -20,7 +27,7 @@ export const games: Game[] = [
     name: 'Let That Shit Go',
     tagline: 'Release the drama, embrace the chaos!',
     description: 'A therapeutic party game where players compete to let go of their baggage in the most hilarious ways possible.',
-    image: 'https://d64gsuwffb70l.cloudfront.net/692bcf0e39ef29fa4b4a1d04_1765334362185_8aec6e6f.jpg',
+    image: ShitGoImage,
     players: '3-8',
     playTime: '30-45 min',
     age: '17+',
@@ -34,7 +41,7 @@ export const games: Game[] = [
     name: 'O Craps',
     tagline: 'Roll the dice, take the risk!',
     description: 'A fast-paced dice game where luck and strategy collide in the most ridiculous ways.',
-    image: 'https://d64gsuwffb70l.cloudfront.net/692bcf0e39ef29fa4b4a1d04_1764522211102_ff9dd019.webp',
+    image: OcrapsImage,
     players: '2-8',
     playTime: '20-30 min',
     age: '17+',
@@ -47,7 +54,7 @@ export const games: Game[] = [
     name: 'Shito',
     tagline: 'The crappiest bingo you\'ll ever play!',
     description: 'A hilarious twist on classic bingo where players mark off ridiculous scenarios and shitty situations to win.',
-    image: 'https://d64gsuwffb70l.cloudfront.net/692bcf0e39ef29fa4b4a1d04_1764522212211_36e2e218.webp',
+    image: ShitoImage,
     players: '2-12',
     playTime: '20-30 min',
     age: '17+',
@@ -62,7 +69,7 @@ export const games: Game[] = [
     name: 'Drop A Deuce',
     tagline: 'The ultimate kids party game!',
     description: 'A hilarious and exciting party game perfect for kids birthdays and family gatherings! Players compete in silly challenges, wacky dares, and laugh-out-loud activities. Get ready to drop the fun!',
-    image: 'https://d64gsuwffb70l.cloudfront.net/692bcf0e39ef29fa4b4a1d04_1765475042082_9f868621.png',
+    image: DeuceImage,
     players: '3-10',
     playTime: '20-40 min',
     age: '6+',
@@ -77,7 +84,7 @@ export const games: Game[] = [
     name: 'Slanging Shit',
     tagline: 'Act it out, guess the crap!',
     description: 'A party charades game where players act out and guess the shitty words and phrases on the cards. No talking allowed!',
-    image: 'https://d64gsuwffb70l.cloudfront.net/692bcf0e39ef29fa4b4a1d04_1764522213159_04b1898d.webp',
+    image: SlangingShitImage,
     players: '4-10',
     playTime: '30-60 min',
     age: '18+',
