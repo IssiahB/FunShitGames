@@ -5,11 +5,18 @@ import {
   Trophy, RotateCcw, Lightbulb, Loader2,
   Shuffle, Check, Info, AlertTriangle, Users, ArrowRight,
 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import cardsPdfUrl from '@/assets/cards/shitz-creek-cards.pdf?url';
 import {
-  getSpaceEffect, getSpaceColor, SpaceEffect, SPACE_EFFECTS,
-  parseCardEffect, ParsedCardAction,
-  findNextSpaceOfType, findClosestSpaceOfType,
+  getSpaceEffect,
+  getSpaceColor,
+  SpaceEffect,
+  SPACE_EFFECTS,
+  parseCardEffect as baseParseCardEffect,
+  ParsedCardAction,
+  findNextSpaceOfType,
+  findClosestSpaceOfType,
   SpaceType,
 } from '@/data/shitzCreekSpaceEffects';
 import ShitzCreekDeckTracker from '@/components/lobby/ShitzCreekDeckTracker';
@@ -19,6 +26,8 @@ import {
   drawFromDeck,
 } from '@/lib/shitzCreekDeck';
 import BotCardRevealOverlay, { type BotCardRevealData } from '@/components/practice/BotCardRevealOverlay';
+
+GlobalWorkerOptions.workerSrc = pdfWorker;
 
 // ─── Types ────────────────────────────────────────────────────────────
 
@@ -36,8 +45,6 @@ interface Props {
   onBotCardDismiss?: () => void;
 }
 
-
-/** Row shape from the parsed_game_cards table (via game-card-loader) */
 interface DbCard {
   id: string;
   game_id: string;
@@ -50,6 +57,15 @@ interface DbCard {
   drink_count: number;
   metadata: Record<string, any>;
   source_file: string;
+  image_url?: string;
+}
+
+interface CardSeed {
+  card_name: string;
+  card_text: string;
+  card_effect: string;
+  card_category: string;
+  action: ParsedCardAction;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────
@@ -66,6 +82,368 @@ const BOARD_SPACES = [
 
 const TOTAL_SPACES = BOARD_SPACES.length;
 const FINISH_SPACE = TOTAL_SPACES - 1;
+
+const CARD_PAGES = [1, 2, 3, 4, 5];
+const GRID_ROWS = 3;
+const GRID_COLS = 3;
+const SLOT_PADDING = 10;
+
+// These target-space strings are best-effort guesses based on your existing game.
+// If your SpaceType enum uses different names, change only the affected strings.
+const ST = {
+  BLUE: 'blue' as SpaceType,
+  SHIT_PILE: 'shit_pile' as SpaceType,
+  PADDLE_SHOP: 'paddle_shop' as SpaceType,
+  SEWER: 'sewer' as SpaceType,
+  SHITFACED: 'shitfaced' as SpaceType,
+  CROSSING_BRIDGE: 'crossing_bridge' as SpaceType,
+};
+
+const CARD_SEEDS: CardSeed[] = [
+  // Page 1
+  {
+    card_name: 'You Have Stepped in Shit',
+    card_text: 'You have stepped in shit. Take 2 steps back.',
+    card_effect: 'Go back 2 spaces',
+    card_category: 'movement',
+    action: { type: 'move_back', text: 'Go back 2 spaces', value: 2 },
+  },
+  {
+    card_name: 'You Have Found a Lost Paddle',
+    card_text: 'You have found a lost paddle.',
+    card_effect: 'Gain 1 paddle',
+    card_category: 'paddle',
+    action: { type: 'paddle_gain', text: 'Gain 1 paddle', value: 1 },
+  },
+  {
+    card_name: 'Boat With One Paddle',
+    card_text: 'You got in a boat with only one paddle. Give one paddle to the person on your right.',
+    card_effect: 'Give 1 paddle to the player on your right',
+    card_category: 'paddle',
+    action: { type: 'paddle_gift_right', text: 'Give 1 paddle to the player on your right' },
+  },
+  {
+    card_name: 'Take a Paddle',
+    card_text: 'Take a paddle from any other player.',
+    card_effect: 'Take 1 paddle from any other player',
+    card_category: 'paddle',
+    action: { type: 'paddle_steal', text: 'Take 1 paddle from any other player', needsPlayerSelect: true },
+  },
+  {
+    card_name: 'You Are Sick as Sh*t',
+    card_text: 'Lose your next turn.',
+    card_effect: 'Lose your next turn',
+    card_category: 'turn',
+    action: { type: 'lose_turn', text: 'Lose your next turn' },
+  },
+  {
+    card_name: 'Sh*t Piles',
+    card_text: 'Put a paddle back.',
+    card_effect: 'Lose 1 paddle',
+    card_category: 'paddle',
+    action: { type: 'paddle_lose', text: 'Lose 1 paddle', value: 1 },
+  },
+  {
+    card_name: 'Some Sad Sh*t',
+    card_text: 'Go to closest blue space.',
+    card_effect: 'Go to the closest blue space',
+    card_category: 'movement',
+    action: { type: 'go_to_space', text: 'Go to the closest blue space', targetSpace: ST.BLUE },
+  },
+  {
+    card_name: 'Some Cool Sh*t',
+    card_text: 'Advance two spaces.',
+    card_effect: 'Move forward 2 spaces',
+    card_category: 'movement',
+    action: { type: 'move_forward', text: 'Move forward 2 spaces', value: 2 },
+  },
+  {
+    card_name: 'Holy Crap You Lost Your Sh*t',
+    card_text: 'Go back 3 spaces.',
+    card_effect: 'Go back 3 spaces',
+    card_category: 'movement',
+    action: { type: 'move_back', text: 'Go back 3 spaces', value: 3 },
+  },
+
+  // Page 2
+  {
+    card_name: 'Here’s Some Cool Sh*t',
+    card_text: 'You just earned a free paddle.',
+    card_effect: 'Gain 1 paddle',
+    card_category: 'paddle',
+    action: { type: 'paddle_gain', text: 'Gain 1 paddle', value: 1 },
+  },
+  {
+    card_name: 'Lost Paddle',
+    card_text: 'You have found a lost paddle.',
+    card_effect: 'Gain 1 paddle',
+    card_category: 'paddle',
+    action: { type: 'paddle_gain', text: 'Gain 1 paddle', value: 1 },
+  },
+  {
+    card_name: 'Plunger Instead of a Paddle',
+    card_text: 'Return one paddle to the pile. If you have 0, go to start.',
+    card_effect: 'Lose 1 paddle',
+    card_category: 'paddle',
+    action: { type: 'paddle_lose', text: 'Lose 1 paddle', value: 1 },
+  },
+  {
+    card_name: 'Take a Paddle From Any Other Player',
+    card_text: 'Take a paddle from any other player.',
+    card_effect: 'Take 1 paddle from any other player',
+    card_category: 'paddle',
+    action: { type: 'paddle_steal', text: 'Take 1 paddle from any other player', needsPlayerSelect: true },
+  },
+  {
+    card_name: 'You Stepped in Sh*t',
+    card_text: 'Go back 5 steps.',
+    card_effect: 'Go back 5 spaces',
+    card_category: 'movement',
+    action: { type: 'move_back', text: 'Go back 5 spaces', value: 5 },
+  },
+  {
+    card_name: 'Sh*t Happens',
+    card_text: 'Lose next turn.',
+    card_effect: 'Lose your next turn',
+    card_category: 'turn',
+    action: { type: 'lose_turn', text: 'Lose your next turn' },
+  },
+  {
+    card_name: 'Didn’t Change the Litter',
+    card_text: 'Go to the closest yellow space.',
+    card_effect: 'Go to the closest yellow space',
+    card_category: 'movement',
+    action: { type: 'go_to_space', text: 'Go to the closest yellow space', targetSpace: ST.SHIT_PILE },
+  },
+  {
+    card_name: 'Flush Another Player',
+    card_text: 'Take a paddle from any one player.',
+    card_effect: 'Take 1 paddle from any other player',
+    card_category: 'paddle',
+    action: { type: 'paddle_steal', text: 'Take 1 paddle from any other player', needsPlayerSelect: true },
+  },
+  {
+    card_name: 'Take the Lead',
+    card_text: 'Move ahead of any player.',
+    card_effect: 'Take the lead',
+    card_category: 'movement',
+    action: { type: 'take_lead', text: 'Take the lead' },
+  },
+
+  // Page 3
+  {
+    card_name: 'You Found a Bridge',
+    card_text: 'Skip next yellow.',
+    card_effect: 'Skip the next yellow space',
+    card_category: 'turn',
+    action: { type: 'skip_yellow', text: 'Skip the next yellow space' },
+  },
+  {
+    card_name: 'Lost Paddle Again',
+    card_text: 'You have found a lost paddle.',
+    card_effect: 'Gain 1 paddle',
+    card_category: 'paddle',
+    action: { type: 'paddle_gain', text: 'Gain 1 paddle', value: 1 },
+  },
+  {
+    card_name: 'Take Another Turn',
+    card_text: 'Take another turn or draw a card.',
+    card_effect: 'Take another turn',
+    card_category: 'turn',
+    action: { type: 'extra_turn', text: 'Take another turn' },
+  },
+  {
+    card_name: 'Gift Another Player a Paddle',
+    card_text: 'Gift another player a paddle.',
+    card_effect: 'Give 1 paddle to another player',
+    card_category: 'paddle',
+    action: { type: 'paddle_gift_choose', text: 'Give 1 paddle to another player', needsPlayerSelect: true },
+  },
+  {
+    card_name: 'No Sh*t',
+    card_text: 'Go to the head of the path.',
+    card_effect: 'Take the lead',
+    card_category: 'movement',
+    action: { type: 'take_lead', text: 'Take the lead' },
+  },
+  {
+    card_name: 'Someone Is an Angry Sh*t',
+    card_text: 'Take a paddle.',
+    card_effect: 'Gain 1 paddle',
+    card_category: 'paddle',
+    action: { type: 'paddle_gain', text: 'Gain 1 paddle', value: 1 },
+  },
+  {
+    card_name: 'Sh*t Stinks',
+    card_text: 'Lose a paddle.',
+    card_effect: 'Lose 1 paddle',
+    card_category: 'paddle',
+    action: { type: 'paddle_lose', text: 'Lose 1 paddle', value: 1 },
+  },
+  {
+    card_name: 'Oh Happy Crap',
+    card_text: 'You get to skip the next yellow.',
+    card_effect: 'Skip the next yellow space',
+    card_category: 'turn',
+    action: { type: 'skip_yellow', text: 'Skip the next yellow space' },
+  },
+  {
+    card_name: 'You Lucky Sh*t',
+    card_text: 'You get a free paddle.',
+    card_effect: 'Gain 1 paddle',
+    card_category: 'paddle',
+    action: { type: 'paddle_gain', text: 'Gain 1 paddle', value: 1 },
+  },
+
+  // Page 4
+  {
+    card_name: 'Pooper Scooper',
+    card_text: 'Go back to the sewer space.',
+    card_effect: 'Go to the sewer space',
+    card_category: 'movement',
+    action: { type: 'go_to_space', text: 'Go to the sewer space', targetSpace: ST.SEWER },
+  },
+  {
+    card_name: 'Hang Over',
+    card_text: 'Return to the shitfaced space.',
+    card_effect: 'Go to the shitfaced space',
+    card_category: 'movement',
+    action: { type: 'go_to_space', text: 'Go to the shitfaced space', targetSpace: ST.SHITFACED },
+  },
+  {
+    card_name: 'You Caught the Beaver',
+    card_text: 'Send another player to the crossing bridge.',
+    card_effect: 'Send another player to the crossing bridge',
+    card_category: 'movement',
+    action: {
+      type: 'send_player_to',
+      text: 'Send another player to the crossing bridge',
+      targetSpace: ST.CROSSING_BRIDGE,
+      needsPlayerSelect: true,
+    },
+  },
+  {
+    card_name: 'Cut in Front of the Latrine Line',
+    card_text: 'Go to the space ahead of the leader.',
+    card_effect: 'Take the lead',
+    card_category: 'movement',
+    action: { type: 'take_lead', text: 'Take the lead' },
+  },
+  {
+    card_name: 'Everyone’s in the Same Shit',
+    card_text: 'Pull another player into your space.',
+    card_effect: 'Bring another player to your space',
+    card_category: 'movement',
+    action: { type: 'bring_player', text: 'Bring another player to your space', needsPlayerSelect: true },
+  },
+  {
+    card_name: 'Something Scared the Shit Out of You',
+    card_text: 'Lose a turn.',
+    card_effect: 'Lose your next turn',
+    card_category: 'turn',
+    action: { type: 'lose_turn', text: 'Lose your next turn' },
+  },
+  {
+    card_name: 'You’ve Strained Too Hard',
+    card_text: 'Go back to closest yellow space.',
+    card_effect: 'Go to the closest yellow space',
+    card_category: 'movement',
+    action: { type: 'go_to_space', text: 'Go to the closest yellow space', targetSpace: ST.SHIT_PILE },
+  },
+  {
+    card_name: 'Send Another Player to Shitz Creek Crossing',
+    card_text: 'Send another player to Shitz Creek Crossing.',
+    card_effect: 'Send another player to the crossing bridge',
+    card_category: 'movement',
+    action: {
+      type: 'send_player_to',
+      text: 'Send another player to the crossing bridge',
+      targetSpace: ST.CROSSING_BRIDGE,
+      needsPlayerSelect: true,
+    },
+  },
+  {
+    card_name: 'Dog Shit on the Neighbor’s Lawn',
+    card_text: 'Go clean it up. You can’t miss him.',
+    card_effect: 'Go to the crossing bridge',
+    card_category: 'movement',
+    action: { type: 'go_to_space', text: 'Go to the crossing bridge', targetSpace: ST.CROSSING_BRIDGE },
+  },
+
+  // Page 5
+  {
+    card_name: 'You Need Help With Your Sewer',
+    card_text: 'Take yourself and another player to the space.',
+    card_effect: 'Take yourself and another player to the sewer space',
+    card_category: 'movement',
+    action: {
+      type: 'move_both_to_space',
+      text: 'Take yourself and another player to the sewer space',
+      targetSpace: ST.SEWER,
+      needsPlayerSelect: true,
+    },
+  },
+  {
+    card_name: 'Keep Moving Forward',
+    card_text: 'Ahead of everyone.',
+    card_effect: 'Take the lead',
+    card_category: 'movement',
+    action: { type: 'take_lead', text: 'Take the lead' },
+  },
+  {
+    card_name: 'You’re All Alone',
+    card_text: 'Go back with the closest player.',
+    card_effect: 'Go back with the closest player',
+    card_category: 'movement',
+    action: { type: 'go_back_with_player', text: 'Go back with the closest player', value: 3 },
+  },
+  {
+    card_name: 'Third in Line for the Latrine',
+    card_text: 'Go that many spaces behind the leader.',
+    card_effect: 'Go 3 spaces behind the leader',
+    card_category: 'movement',
+    action: { type: 'behind_leader', text: 'Go 3 spaces behind the leader', value: 3 },
+  },
+  {
+    card_name: 'Hard to Be Number 1',
+    card_text: 'Go back 2 spaces.',
+    card_effect: 'Go back 2 spaces',
+    card_category: 'movement',
+    action: { type: 'move_back', text: 'Go back 2 spaces', value: 2 },
+  },
+  {
+    card_name: 'Shitty Day',
+    card_text: 'Give a paddle to the person on your right.',
+    card_effect: 'Give 1 paddle to the player on your right',
+    card_category: 'paddle',
+    action: { type: 'paddle_gift_right', text: 'Give 1 paddle to the player on your right' },
+  },
+  {
+    card_name: 'You Pooped Today',
+    card_text: 'Draw again.',
+    card_effect: 'Draw again',
+    card_category: 'turn',
+    action: { type: 'draw_again', text: 'Draw again' },
+  },
+  {
+    card_name: 'Shitty Days Are Better With Friends',
+    card_text: 'Bring ALL yours to your space.',
+    card_effect: 'Bring all players to your space',
+    card_category: 'movement',
+    action: { type: 'bring_all_players', text: 'Bring all players to your space' },
+  },
+  {
+    card_name: 'Return to the Paddle',
+    card_text: 'Return to the paddle shop.',
+    card_effect: 'Go to the paddle shop',
+    card_category: 'movement',
+    action: { type: 'go_to_space', text: 'Go to the paddle shop', targetSpace: ST.PADDLE_SHOP },
+  },
+];
+
+const CARD_ACTIONS_BY_ID: Record<string, ParsedCardAction> = Object.fromEntries(
+  CARD_SEEDS.map((seed, index) => [`sc-card-${String(index + 1).padStart(3, '0')}`, seed.action])
+);
 
 // ─── Small sub-components ─────────────────────────────────────────────
 
@@ -133,6 +511,85 @@ function getCardActionColor(action: ParsedCardAction | null): string {
   }
 }
 
+// ─── PDF + card helpers ──────────────────────────────────────────────
+
+function buildCardsManifest(): DbCard[] {
+  return CARD_SEEDS.map((seed, index) => ({
+    id: `sc-card-${String(index + 1).padStart(3, '0')}`,
+    game_id: 'shitz-creek',
+    card_type: 'shit-pile',
+    card_name: seed.card_name,
+    card_text: seed.card_text,
+    card_effect: seed.card_effect,
+    card_category: seed.card_category,
+    card_number: index + 1,
+    drink_count: 0,
+    metadata: {
+      page: Math.floor(index / 9) + 1,
+      slot: index % 9,
+    },
+    source_file: 'shitz-creek-cards.pdf',
+  }));
+}
+
+function cropCardFromRenderedPage(
+  sourceCanvas: HTMLCanvasElement,
+  row: number,
+  col: number,
+  rows = GRID_ROWS,
+  cols = GRID_COLS
+): string {
+  const ctx = sourceCanvas.getContext('2d');
+  if (!ctx) throw new Error('Could not get source canvas context');
+
+  const rawCardWidth = sourceCanvas.width / cols;
+  const rawCardHeight = sourceCanvas.height / rows;
+
+  const sx = Math.floor(col * rawCardWidth + SLOT_PADDING);
+  const sy = Math.floor(row * rawCardHeight + SLOT_PADDING);
+  const sw = Math.floor(rawCardWidth - SLOT_PADDING * 2);
+  const sh = Math.floor(rawCardHeight - SLOT_PADDING * 2);
+
+  const outCanvas = document.createElement('canvas');
+  outCanvas.width = sw;
+  outCanvas.height = sh;
+
+  const outCtx = outCanvas.getContext('2d');
+  if (!outCtx) throw new Error('Could not get output canvas context');
+
+  outCtx.drawImage(sourceCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
+  return outCanvas.toDataURL('image/png');
+}
+
+async function renderPdfPageToCanvas(pdfUrl: string, pageNumber: number, scale = 2): Promise<HTMLCanvasElement> {
+  const loadingTask = getDocument(pdfUrl);
+  const pdf = await loadingTask.promise;
+  const page = await pdf.getPage(pageNumber);
+  const viewport = page.getViewport({ scale });
+
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+
+  if (!context) throw new Error('Could not get canvas context');
+
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+
+  await page.render({
+    canvasContext: context,
+    viewport,
+  }).promise;
+
+  return canvas;
+}
+
+function parseLocalCardEffect(card: DbCard): ParsedCardAction | null {
+  const override = CARD_ACTIONS_BY_ID[card.id];
+  if (override) return override;
+
+  return baseParseCardEffect(card.card_effect);
+}
+
 // ─── Main Component ───────────────────────────────────────────────────
 
 export default function PracticeShitzCreekBoard({
@@ -146,7 +603,6 @@ export default function PracticeShitzCreekBoard({
   botCardReveal,
   onBotCardDismiss,
 }: Props) {
-
   // ── Local UI state ────────────────────────────────────────────────
   const [rolling, setRolling] = useState(false);
   const [message, setMessage] = useState('');
@@ -154,7 +610,7 @@ export default function PracticeShitzCreekBoard({
   const [loadingBoard, setLoadingBoard] = useState(true);
   const [showSpaceInfo, setShowSpaceInfo] = useState(false);
 
-  // DB card deck
+  // Local PDF card deck
   const [dbCards, setDbCards] = useState<DbCard[]>([]);
   const [dbCardsMap, setDbCardsMap] = useState<Map<string, DbCard>>(new Map());
   const [cardsLoading, setCardsLoading] = useState(true);
@@ -167,7 +623,7 @@ export default function PracticeShitzCreekBoard({
   const [isDrawingCard, setIsDrawingCard] = useState(false);
   const [waitingForCard, setWaitingForCard] = useState(false);
 
-  // Player picker modal (for needsPlayerSelect actions)
+  // Player picker modal
   const [showPlayerPicker, setShowPlayerPicker] = useState(false);
   const [playerPickerPrompt, setPlayerPickerPrompt] = useState('');
   const [pendingAction, setPendingAction] = useState<ParsedCardAction | null>(null);
@@ -200,7 +656,7 @@ export default function PracticeShitzCreekBoard({
 
   useEffect(() => {
     loadBoardImage();
-    loadCardsFromDb();
+    loadCardsFromPdf();
   }, []);
 
   useEffect(() => {
@@ -213,9 +669,8 @@ export default function PracticeShitzCreekBoard({
       });
       onAction('init', { positions: initPositions, paddles: initPaddles, currentTurn: 0 });
     }
-  }, [players.length]);
+  }, [players.length, onAction, positions]);
 
-  // Initialise the deck in gameData once cards are loaded
   useEffect(() => {
     if (dbCards.length > 0 && !deckState && !deckInitRef.current) {
       deckInitRef.current = true;
@@ -223,73 +678,70 @@ export default function PracticeShitzCreekBoard({
       onAction('initDeck', { deckState: newDeck });
       console.log(`🃏 Practice: Initialized deck with ${newDeck.drawPile.length} cards`);
     }
-  }, [dbCards, deckState]);
+  }, [dbCards, deckState, onAction]);
 
   // ── Load board image ──────────────────────────────────────────────
 
   const loadBoardImage = async () => {
     try {
-      const { data } = await supabase.storage.from('Game Boards').list('', {
-        limit: 100,
-        search: 'shitz-creek',
-      });
-      if (data && data.length > 0) {
-        const boardFile = data.find(
-          f => f.name.toLowerCase().includes('shitz-creek') && f.name.match(/\.(png|jpg|jpeg|gif|webp)$/i),
-        );
-        if (boardFile) {
-          const { data: urlData } = supabase.storage.from('Game Boards').getPublicUrl(boardFile.name);
-          setBoardImage(urlData.publicUrl);
-          setLoadingBoard(false);
-          return;
-        }
-      }
-      const { data: fallbackData } = await supabase.storage.from('game-boards').list('shitz-creek-board');
-      if (fallbackData && fallbackData.length > 0) {
-        const boardFile = fallbackData.find(f => f.name.match(/\.(png|jpg|jpeg|gif|webp)$/i));
-        if (boardFile) {
-          const { data: urlData } = supabase.storage.from('game-boards').getPublicUrl(`shitz-creek-board/${boardFile.name}`);
-          setBoardImage(urlData.publicUrl);
-        }
-      }
+      const boardImage = await import('@/assets/images/boards/shitz-creek-board.png');
+      setBoardImage(boardImage.default);
     } catch (err) {
-      console.log('Board image not found:', err);
+      console.log('Board image not found in assets:', err);
     }
     setLoadingBoard(false);
   };
 
-  // ── Load real cards from DB via edge function ─────────────────────
+  // ── Load cards from local PDF ─────────────────────────────────────
 
-  const loadCardsFromDb = async () => {
+  const loadCardsFromPdf = async () => {
     setCardsLoading(true);
     setCardsError(null);
+
     try {
-      const { data, error } = await supabase.functions.invoke('game-card-loader', {
-        body: { action: 'get-cards', gameId: 'shitz-creek' },
-      });
-      if (error) throw error;
+      const croppedImages: string[] = [];
 
-      const payload = data as any;
-      let cards: DbCard[] = [];
+      for (const pageNumber of CARD_PAGES) {
+        const pageCanvas = await renderPdfPageToCanvas(cardsPdfUrl, pageNumber, 2);
 
-      if (payload?.cards && Array.isArray(payload.cards)) {
-        cards = payload.cards;
-      } else if (payload?.data?.cards && Array.isArray(payload.data.cards)) {
-        cards = payload.data.cards;
-      } else {
-        throw new Error('Unexpected response shape from game-card-loader');
+        for (let row = 0; row < GRID_ROWS; row++) {
+          for (let col = 0; col < GRID_COLS; col++) {
+            const imageUrl = cropCardFromRenderedPage(pageCanvas, row, col);
+            croppedImages.push(imageUrl);
+          }
+        }
       }
 
+      const manifest = buildCardsManifest();
+
+      if (croppedImages.length !== manifest.length) {
+        throw new Error(
+          `Card image count (${croppedImages.length}) does not match manifest count (${manifest.length})`
+        );
+      }
+
+      const cards: DbCard[] = manifest.map((card, index) => ({
+        ...card,
+        image_url: croppedImages[index],
+        metadata: {
+          ...card.metadata,
+          imageIndex: index,
+        },
+      }));
+
       setDbCards(cards);
+
       const map = new Map<string, DbCard>();
-      cards.forEach(c => map.set(c.id, c));
+      cards.forEach(card => map.set(card.id, card));
       setDbCardsMap(map);
-      console.log(`✅ Practice: Loaded ${cards.length} real shit-pile cards from DB`);
+
+      console.log(`✅ Practice: Loaded ${cards.length} cards from local PDF`);
     } catch (err: any) {
-      console.error('Practice: Failed to load cards from DB:', err);
-      setCardsError(err?.message || 'Failed to load cards');
+      console.error('Practice: Failed to load cards from local PDF:', err);
+      setCardsError(err?.message || 'Failed to load cards from PDF');
+    } finally {
+      setCardsLoading(false);
     }
-    setCardsLoading(false);
   };
 
   // ── Helpers ───────────────────────────────────────────────────────
@@ -314,7 +766,10 @@ export default function PracticeShitzCreekBoard({
     players.forEach(p => {
       if (p.player_id === playerId) return;
       const dist = Math.abs((positions[p.player_id] || 0) - myPos);
-      if (dist < closestDist) { closestDist = dist; closest = p.player_id; }
+      if (dist < closestDist) {
+        closestDist = dist;
+        closest = p.player_id;
+      }
     });
     return closest;
   };
@@ -338,7 +793,12 @@ export default function PracticeShitzCreekBoard({
       if (effect.spaceType === 'shit_pile' && skipYellow[playerId]) {
         const newSkipYellow = { ...skipYellow, [playerId]: false };
         onAction('update', { skipYellow: newSkipYellow });
-        return { positions: newPositions, paddles: newPaddles, needsCard: false, message: 'You skipped this yellow (Shit Pile) space!' };
+        return {
+          positions: newPositions,
+          paddles: newPaddles,
+          needsCard: false,
+          message: 'You skipped this yellow (Shit Pile) space!',
+        };
       }
 
       switch (effect.type) {
@@ -408,6 +868,7 @@ export default function PracticeShitzCreekBoard({
     }
 
     setIsDrawingCard(true);
+
     setTimeout(() => {
       const latestDeck = (gameDataRef.current.deckState as DeckState) || currentDeck;
       const result = drawFromDeck(latestDeck);
@@ -418,7 +879,6 @@ export default function PracticeShitzCreekBoard({
         return;
       }
 
-      // Persist updated deck state
       onAction('updateDeck', { deckState: result.deckState });
 
       if (result.reshuffled) {
@@ -432,7 +892,7 @@ export default function PracticeShitzCreekBoard({
         return;
       }
 
-      const action = parseCardEffect(card.card_effect);
+      const action = parseLocalCardEffect(card);
       setDrawnDbCard(card);
       setParsedAction(action);
       setIsDrawingCard(false);
@@ -461,18 +921,22 @@ export default function PracticeShitzCreekBoard({
           pos[playerId] = Math.max(0, myPos - (action.value || 2));
           setMessage(`Moved back ${action.value || 2} spaces!`);
           break;
+
         case 'move_forward':
           pos[playerId] = Math.min(FINISH_SPACE, myPos + (action.value || 2));
           setMessage(`Moved forward ${action.value || 2} spaces!`);
           break;
+
         case 'paddle_gain':
           pad[playerId] = (pad[playerId] || 1) + 1;
           setMessage('Got a paddle! +1');
           break;
+
         case 'paddle_lose':
           pad[playerId] = Math.max(0, (pad[playerId] || 1) - 1);
           setMessage('Lost a paddle! -1');
           break;
+
         case 'paddle_steal':
           if (targetPlayerId && (pad[targetPlayerId] || 0) > 0) {
             pad[targetPlayerId]--;
@@ -482,6 +946,7 @@ export default function PracticeShitzCreekBoard({
             setMessage('Target has no paddles to steal!');
           }
           break;
+
         case 'paddle_gift_right': {
           const rightId = getPlayerToRight();
           if (rightId && pad[playerId] > 0) {
@@ -493,6 +958,7 @@ export default function PracticeShitzCreekBoard({
           }
           break;
         }
+
         case 'paddle_gift_choose':
           if (targetPlayerId && pad[playerId] > 0) {
             pad[playerId]--;
@@ -502,17 +968,21 @@ export default function PracticeShitzCreekBoard({
             setMessage('No paddle to gift!');
           }
           break;
+
         case 'lose_turn':
           sk[playerId] = true;
           setMessage('You lose your next turn!');
           break;
+
         case 'extra_turn':
           er[playerId] = true;
           setMessage('Take another turn!');
           break;
+
         case 'draw_again':
           setMessage('Draw again!');
           break;
+
         case 'go_to_space': {
           if (action.targetSpace) {
             const target =
@@ -520,10 +990,11 @@ export default function PracticeShitzCreekBoard({
                 ? findClosestSpaceOfType(myPos, action.targetSpace)
                 : findNextSpaceOfType(myPos, action.targetSpace);
             pos[playerId] = target;
-            setMessage(`Moved to ${SPACE_EFFECTS[target]?.spaceName || action.targetSpace} (space ${target})!`);
+            setMessage(`Moved to ${SPACE_EFFECTS[target]?.spaceName || String(action.targetSpace)} (space ${target})!`);
           }
           break;
         }
+
         case 'go_to_space_and_gain_paddle': {
           if (action.targetSpace) {
             const target = findClosestSpaceOfType(myPos, action.targetSpace);
@@ -533,12 +1004,14 @@ export default function PracticeShitzCreekBoard({
           }
           break;
         }
+
         case 'take_lead': {
           const maxPos = Math.max(...Object.values(pos).map(p => (typeof p === 'number' ? p : 0)));
           if (maxPos > myPos) pos[playerId] = Math.min(maxPos + 1, FINISH_SPACE);
           setMessage('You took the lead!');
           break;
         }
+
         case 'move_ahead_of_player':
           if (targetPlayerId) {
             const theirPos = pos[targetPlayerId] || 0;
@@ -546,29 +1019,34 @@ export default function PracticeShitzCreekBoard({
             setMessage(`Moved ahead of ${players.find(p => p.player_id === targetPlayerId)?.player_name}!`);
           }
           break;
+
         case 'behind_leader': {
           const leaderPos = Math.max(...Object.values(pos).map(p => (typeof p === 'number' ? p : 0)));
           pos[playerId] = Math.max(0, leaderPos - (action.value || 3));
-          setMessage('Moved to 3 spaces behind the leader!');
+          setMessage(`Moved to ${action.value || 3} spaces behind the leader!`);
           break;
         }
+
         case 'send_player_to':
           if (targetPlayerId && action.targetSpace) {
             const target = findClosestSpaceOfType(pos[targetPlayerId] || 0, action.targetSpace);
             pos[targetPlayerId] = target;
-            setMessage(`Sent ${players.find(p => p.player_id === targetPlayerId)?.player_name} to ${SPACE_EFFECTS[target]?.spaceName || action.targetSpace}!`);
+            setMessage(`Sent ${players.find(p => p.player_id === targetPlayerId)?.player_name} to ${SPACE_EFFECTS[target]?.spaceName || String(action.targetSpace)}!`);
           }
           break;
+
         case 'bring_player':
           if (targetPlayerId) {
             pos[targetPlayerId] = myPos;
             setMessage(`Brought ${players.find(p => p.player_id === targetPlayerId)?.player_name} to your space!`);
           }
           break;
+
         case 'bring_all_players':
           players.forEach(p => { pos[p.player_id] = myPos; });
           setMessage('Brought all players to your space!');
           break;
+
         case 'go_back_with_player': {
           const closestId = getClosestPlayer();
           const backSpaces = action.value || 3;
@@ -581,6 +1059,7 @@ export default function PracticeShitzCreekBoard({
           }
           break;
         }
+
         case 'move_player_behind_last':
           if (targetPlayerId) {
             const minPos = Math.min(...Object.values(pos).map(p => (typeof p === 'number' ? p : 0)));
@@ -588,24 +1067,25 @@ export default function PracticeShitzCreekBoard({
             setMessage(`Moved ${players.find(p => p.player_id === targetPlayerId)?.player_name} behind last place!`);
           }
           break;
+
         case 'skip_yellow':
           sy[playerId] = true;
           setMessage('You can skip the next yellow (Shit Pile) space!');
           break;
+
         case 'move_both_to_space': {
           if (action.targetSpace) {
             const target = findClosestSpaceOfType(myPos, action.targetSpace);
             pos[playerId] = target;
             if (targetPlayerId) {
               pos[targetPlayerId] = target;
-              setMessage(`You and ${players.find(p => p.player_id === targetPlayerId)?.player_name} moved to ${SPACE_EFFECTS[target]?.spaceName}!`);
+              setMessage(`You and ${players.find(p => p.player_id === targetPlayerId)?.player_name} moved to ${SPACE_EFFECTS[target]?.spaceName || String(action.targetSpace)}!`);
             }
           }
           break;
         }
       }
 
-      // Check for win after card effect
       if ((pos[playerId] || 0) >= FINISH_SPACE && (pad[playerId] || 0) >= 2) {
         onAction('win', { winner: playerId, positions: pos, paddles: pad });
         return false;
@@ -622,7 +1102,7 @@ export default function PracticeShitzCreekBoard({
 
       return action.type === 'draw_again';
     },
-    [currentPlayer, players, onAction],
+    [currentPlayer, players, onAction, getClosestPlayer],
   );
 
   // ── Handle "Continue" after viewing drawn card ────────────────────
@@ -647,11 +1127,11 @@ export default function PracticeShitzCreekBoard({
       switch (parsedAction.type) {
         case 'paddle_steal': prompt = 'Select a player to steal a paddle from'; break;
         case 'paddle_gift_choose': prompt = 'Select a player to gift a paddle to'; break;
-        case 'send_player_to': prompt = `Select a player to send to ${parsedAction.targetSpace?.replace('_', ' ')}`; break;
+        case 'send_player_to': prompt = `Select a player to send to ${String(parsedAction.targetSpace).replace('_', ' ')}`; break;
         case 'bring_player': prompt = 'Select a player to bring to your space'; break;
         case 'move_ahead_of_player': prompt = 'Select a player to move ahead of'; break;
         case 'move_player_behind_last': prompt = 'Select a player to move behind last place'; break;
-        case 'move_both_to_space': prompt = `Select a player to move to ${parsedAction.targetSpace?.replace('_', ' ')} with you`; break;
+        case 'move_both_to_space': prompt = `Select a player to move to ${String(parsedAction.targetSpace).replace('_', ' ')} with you`; break;
       }
 
       setPlayerPickerPrompt(prompt);
@@ -845,7 +1325,7 @@ export default function PracticeShitzCreekBoard({
               extraRoll: {},
               skipYellow: {},
               lastCard: null,
-              deckState: null, // Will be re-initialised
+              deckState: null,
             })
           }
           className="mt-4 bg-amber-600 hover:bg-amber-500"
@@ -898,7 +1378,7 @@ export default function PracticeShitzCreekBoard({
           <div className="text-sm text-red-200 flex-1">
             <span className="font-semibold">Card loading failed:</span> {cardsError}
           </div>
-          <Button variant="link" size="sm" onClick={loadCardsFromDb} className="text-red-300 underline p-0 h-auto">
+          <Button variant="link" size="sm" onClick={loadCardsFromPdf} className="text-red-300 underline p-0 h-auto">
             Retry
           </Button>
         </div>
@@ -1083,7 +1563,7 @@ export default function PracticeShitzCreekBoard({
         <ul className="text-sm text-gray-300 space-y-1">
           <li>Roll the dice and move up the creek</li>
           <li>Each space has a unique effect - check the Space Guide!</li>
-          <li>Land on shit-pile spaces to draw a real card from the deck</li>
+          <li>Land on shit-pile spaces to draw a local card from the deck</li>
           <li>Cards are drawn without replacement - when the deck runs out, the discard pile is reshuffled back in</li>
           <li>Some cards let you target other players</li>
           <li>Collect 2 paddles to be able to win</li>
@@ -1099,31 +1579,42 @@ export default function PracticeShitzCreekBoard({
               <span className="text-3xl">💩</span> Shit Pile Card!
             </h3>
 
-            {/* Card display */}
             <div className={`relative aspect-[3/4] rounded-xl overflow-hidden mb-4 ${isDrawingCard ? 'animate-pulse' : ''}`}>
               {drawnDbCard && parsedAction ? (
-                <div
-                  className={`w-full h-full flex flex-col items-center justify-center bg-gradient-to-br ${getCardActionColor(parsedAction)} p-6`}
-                  style={{ animation: 'fadeIn 0.4s ease-out' }}
-                >
-                  <div className="text-6xl mb-4">{getCardActionIcon(parsedAction)}</div>
-                  <div className="bg-black/30 rounded-lg px-4 py-2 mb-3">
-                    <p className="text-amber-300 text-xs font-mono">{drawnDbCard.card_name}</p>
+                <div className="w-full h-full relative rounded-xl overflow-hidden" style={{ animation: 'fadeIn 0.4s ease-out' }}>
+                  {drawnDbCard.image_url ? (
+                    <img
+                      src={drawnDbCard.image_url}
+                      alt={drawnDbCard.card_name}
+                      className="absolute inset-0 w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className={`absolute inset-0 bg-gradient-to-br ${getCardActionColor(parsedAction)}`} />
+                  )}
+
+                  <div className="absolute inset-0 bg-black/35" />
+
+                  <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/80 to-transparent">
+                    <div className="bg-black/40 rounded-lg px-3 py-2 mb-2">
+                      <p className="text-amber-300 text-xs font-mono">{drawnDbCard.card_name}</p>
+                    </div>
+                    <p className="text-white font-bold text-sm leading-snug">
+                      {drawnDbCard.card_effect}
+                    </p>
+
+                    {parsedAction.needsPlayerSelect && (
+                      <div className="mt-2 flex items-center gap-1 text-yellow-300 text-xs">
+                        <Users className="w-4 h-4" />
+                        <span>Choose a player next</span>
+                      </div>
+                    )}
+
+                    {parsedAction.targetSpace && (
+                      <div className="mt-2 text-amber-200 text-xs">
+                        Target: {String(parsedAction.targetSpace).replace('_', ' ').toUpperCase()} space
+                      </div>
+                    )}
                   </div>
-                  <p className="text-white font-bold text-xl text-center leading-tight">
-                    {drawnDbCard.card_effect}
-                  </p>
-                  {parsedAction.needsPlayerSelect && (
-                    <div className="mt-3 flex items-center gap-1 text-yellow-300 text-sm">
-                      <Users className="w-4 h-4" />
-                      <span>Choose a player next</span>
-                    </div>
-                  )}
-                  {parsedAction.targetSpace && (
-                    <div className="mt-2 text-amber-200 text-xs">
-                      Target: {parsedAction.targetSpace.replace('_', ' ').toUpperCase()} space
-                    </div>
-                  )}
                 </div>
               ) : (
                 <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-amber-700 to-amber-900">
@@ -1134,7 +1625,6 @@ export default function PracticeShitzCreekBoard({
               )}
             </div>
 
-            {/* Effect description */}
             {parsedAction && (
               <div className="bg-gradient-to-r from-yellow-600/80 to-amber-600/80 rounded-lg p-4 mb-4 text-center border-2 border-yellow-400">
                 <p className="text-white font-bold text-lg">{parsedAction.text}</p>
@@ -1142,7 +1632,6 @@ export default function PracticeShitzCreekBoard({
               </div>
             )}
 
-            {/* Draw / Continue buttons */}
             {!drawnDbCard ? (
               <Button
                 onClick={drawCard}
@@ -1176,7 +1665,6 @@ export default function PracticeShitzCreekBoard({
               </Button>
             )}
 
-            {/* Deck status in modal */}
             <div className="mt-3">
               <ShitzCreekDeckTracker deckState={deckState} loading={cardsLoading} />
             </div>

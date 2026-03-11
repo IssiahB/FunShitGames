@@ -42,7 +42,7 @@ const HeroSection: React.FC<HeroSectionProps> = ({ onShopClick, onPricingClick }
       
       <div className="relative z-10 text-center px-4 max-w-4xl mx-auto">
         {/* Logo at top of hero - Dynamic from LogoContext */}
-        <div className="mb-8 flex justify-center">
+        <div className="mb-8 flex justify-center mt-16">
           <div className="relative group">
             <div className="absolute -inset-4 bg-gradient-to-r from-amber-500/30 via-lime-500/30 to-amber-500/30 rounded-full blur-xl opacity-75 group-hover:opacity-100 transition-opacity animate-pulse" />
             <img 
