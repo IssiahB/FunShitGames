@@ -65,19 +65,44 @@ interface CardSeed {
   card_text: string;
   card_effect: string;
   card_category: string;
-  action: ParsedCardAction;
+  /**
+   * Optional explicit action override.
+   * We now prefer the shared parser from shitzCreekSpaceEffects.ts so this is
+   * only used when a card's PDF wording does not line up cleanly with the
+   * parser's current phrase handling.
+   */
+  action?: ParsedCardAction;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────
 
 const BOARD_SPACES = [
-  { x: 8, y: 88 }, { x: 16, y: 86 }, { x: 24, y: 82 }, { x: 32, y: 78 },
-  { x: 40, y: 74 }, { x: 48, y: 70 }, { x: 56, y: 66 }, { x: 64, y: 62 },
-  { x: 72, y: 56 }, { x: 78, y: 48 }, { x: 82, y: 40 }, { x: 84, y: 32 },
-  { x: 82, y: 24 }, { x: 76, y: 18 }, { x: 68, y: 14 }, { x: 58, y: 12 },
-  { x: 48, y: 14 }, { x: 38, y: 18 }, { x: 28, y: 24 }, { x: 20, y: 32 },
-  { x: 18, y: 42 }, { x: 22, y: 50 }, { x: 30, y: 56 }, { x: 40, y: 58 },
-  { x: 50, y: 55 }, { x: 58, y: 48 },
+  { x: 7, y: 50 },
+  { x: 7, y: 40 },
+  { x: 7, y: 27 },
+  { x: 16.5, y: 27 },
+  { x: 26, y: 27 },
+  { x: 35, y: 27 },
+  { x: 46.5, y: 33 }, // Bridge
+  { x: 60, y: 27 },
+  { x: 69, y: 27 },
+  { x: 78.5, y: 27 },
+  { x: 88.3, y: 27 }, // Shit Top right
+  { x: 88.3, y: 39.5 },
+  { x: 88.3, y: 52 },
+  { x: 88.3, y: 65 },
+  { x: 88.7, y: 77 }, // Bottom Right
+  { x: 79.5, y: 77 },
+  { x: 70.5, y: 77 },
+  { x: 61, y: 77 },
+  { x: 51.5, y: 77 },
+  { x: 42.5, y: 77 },
+  { x: 33.5, y: 77 },
+  { x: 24.5, y: 77 },
+  { x: 15.3, y: 77 },
+  { x: 6, y: 77 }, // Bottom Left
+  { x: 6, y: 65 },
+  { x: 12, y: 57 },
 ];
 
 const TOTAL_SPACES = BOARD_SPACES.length;
@@ -88,15 +113,14 @@ const GRID_ROWS = 3;
 const GRID_COLS = 3;
 const SLOT_PADDING = 10;
 
-// These target-space strings are best-effort guesses based on your existing game.
-// If your SpaceType enum uses different names, change only the affected strings.
+// Shared space-type constants aligned with shitzCreekSpaceEffects.ts.
 const ST = {
   BLUE: 'blue' as SpaceType,
   SHIT_PILE: 'shit_pile' as SpaceType,
   PADDLE_SHOP: 'paddle_shop' as SpaceType,
   SEWER: 'sewer' as SpaceType,
   SHITFACED: 'shitfaced' as SpaceType,
-  CROSSING_BRIDGE: 'crossing_bridge' as SpaceType,
+  CROSSING: 'crossing' as SpaceType,
 };
 
 const CARD_SEEDS: CardSeed[] = [
@@ -318,7 +342,7 @@ const CARD_SEEDS: CardSeed[] = [
     action: {
       type: 'send_player_to',
       text: 'Send another player to the crossing bridge',
-      targetSpace: ST.CROSSING_BRIDGE,
+      targetSpace: ST.CROSSING,
       needsPlayerSelect: true,
     },
   },
@@ -358,7 +382,7 @@ const CARD_SEEDS: CardSeed[] = [
     action: {
       type: 'send_player_to',
       text: 'Send another player to the crossing bridge',
-      targetSpace: ST.CROSSING_BRIDGE,
+      targetSpace: ST.CROSSING,
       needsPlayerSelect: true,
     },
   },
@@ -367,7 +391,7 @@ const CARD_SEEDS: CardSeed[] = [
     card_text: 'Go clean it up. You can’t miss him.',
     card_effect: 'Go to the crossing bridge',
     card_category: 'movement',
-    action: { type: 'go_to_space', text: 'Go to the crossing bridge', targetSpace: ST.CROSSING_BRIDGE },
+    action: { type: 'go_to_space', text: 'Go to the crossing bridge', targetSpace: ST.CROSSING },
   },
 
   // Page 5
@@ -442,7 +466,11 @@ const CARD_SEEDS: CardSeed[] = [
 ];
 
 const CARD_ACTIONS_BY_ID: Record<string, ParsedCardAction> = Object.fromEntries(
-  CARD_SEEDS.map((seed, index) => [`sc-card-${String(index + 1).padStart(3, '0')}`, seed.action])
+  CARD_SEEDS.flatMap((seed, index) =>
+    seed.action
+      ? [[`sc-card-${String(index + 1).padStart(3, '0')}`, seed.action]]
+      : []
+  )
 );
 
 // ─── Small sub-components ─────────────────────────────────────────────
@@ -584,10 +612,25 @@ async function renderPdfPageToCanvas(pdfUrl: string, pageNumber: number, scale =
 }
 
 function parseLocalCardEffect(card: DbCard): ParsedCardAction | null {
+  // Prefer the shared parser so the practice board stays aligned with the real
+  // game logic that already exists elsewhere in the codebase. Only fall back to
+  // a per-card override when a specific PDF card's wording needs help.
+  const parsed = baseParseCardEffect(card.card_effect);
   const override = CARD_ACTIONS_BY_ID[card.id];
-  if (override) return override;
 
-  return baseParseCardEffect(card.card_effect);
+  // The shared parser currently falls back to `move_back 1` for unknown text.
+  // Preserve explicit per-card overrides for those cases so the practice board
+  // still behaves correctly without drifting away from the shared parser.
+  if (
+    override &&
+    parsed.type === 'move_back' &&
+    parsed.value === 1 &&
+    parsed.text === card.card_effect
+  ) {
+    return override;
+  }
+
+  return parsed || override || null;
 }
 
 // ─── Main Component ───────────────────────────────────────────────────
