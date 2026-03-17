@@ -5,9 +5,6 @@ import {
   Trophy, RotateCcw, Lightbulb, Loader2,
   Shuffle, Check, Info, AlertTriangle, Users, ArrowRight,
 } from 'lucide-react';
-import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
-import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import cardsPdfUrl from '@/assets/cards/shitz-creek-cards.pdf?url';
 import {
   getSpaceEffect,
   getSpaceColor,
@@ -27,7 +24,6 @@ import {
 } from '@/lib/shitzCreekDeck';
 import BotCardRevealOverlay, { type BotCardRevealData } from '@/components/practice/BotCardRevealOverlay';
 
-GlobalWorkerOptions.workerSrc = pdfWorker;
 
 // ─── Types ────────────────────────────────────────────────────────────
 
@@ -74,6 +70,17 @@ interface CardSeed {
   action?: ParsedCardAction;
 }
 
+interface ManifestCardSeed extends CardSeed {
+  sourceIndex: number;
+}
+
+type CardImageModule = { default: string };
+
+const CARD_IMAGE_MODULES = import.meta.glob<CardImageModule>(
+  '@/assets/cards/shitzcreek/images/*.png',
+  { eager: true }
+);
+
 // ─── Constants ────────────────────────────────────────────────────────
 
 const BOARD_SPACES = [
@@ -108,10 +115,6 @@ const BOARD_SPACES = [
 const TOTAL_SPACES = BOARD_SPACES.length;
 const FINISH_SPACE = TOTAL_SPACES - 1;
 
-const CARD_PAGES = [1, 2, 3, 4, 5];
-const GRID_ROWS = 3;
-const GRID_COLS = 3;
-const SLOT_PADDING = 10;
 
 // Shared space-type constants aligned with shitzCreekSpaceEffects.ts.
 const ST = {
@@ -468,10 +471,42 @@ const CARD_SEEDS: CardSeed[] = [
 const CARD_ACTIONS_BY_ID: Record<string, ParsedCardAction> = Object.fromEntries(
   CARD_SEEDS.flatMap((seed, index) =>
     seed.action
-      ? [[`sc-card-${String(index + 1).padStart(3, '0')}`, seed.action]]
+      ? [[`sc-card-src-${String(index + 1).padStart(3, '0')}`, seed.action]]
       : []
   )
 );
+
+const RANDOM_MANIFEST_SIZE = 45;
+
+function shuffleArray<T>(items: T[]): T[] {
+  const shuffled = [...items];
+  for (let i = shuffled.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+
+function getSeedPageAndCard(sourceIndex: number): { page: number; card: number } {
+  return {
+    page: Math.floor(sourceIndex / 9) + 1,
+    card: (sourceIndex % 9) + 1,
+  };
+}
+
+function getSeedImageBaseName(sourceIndex: number): string {
+  const { page, card } = getSeedPageAndCard(sourceIndex);
+  return `p${page}-c${card}`;
+}
+
+function buildRandomCardSeeds(): ManifestCardSeed[] {
+  return shuffleArray(
+    CARD_SEEDS.map((seed, index) => ({
+      ...seed,
+      sourceIndex: index,
+    }))
+  ).slice(0, Math.min(RANDOM_MANIFEST_SIZE, CARD_SEEDS.length));
+}
 
 // ─── Small sub-components ─────────────────────────────────────────────
 
@@ -539,76 +574,70 @@ function getCardActionColor(action: ParsedCardAction | null): string {
   }
 }
 
-// ─── PDF + card helpers ──────────────────────────────────────────────
+// ─── Card image helpers ──────────────────────────────────────────────
 
-function buildCardsManifest(): DbCard[] {
-  return CARD_SEEDS.map((seed, index) => ({
-    id: `sc-card-${String(index + 1).padStart(3, '0')}`,
-    game_id: 'shitz-creek',
-    card_type: 'shit-pile',
-    card_name: seed.card_name,
-    card_text: seed.card_text,
-    card_effect: seed.card_effect,
-    card_category: seed.card_category,
-    card_number: index + 1,
-    drink_count: 0,
-    metadata: {
-      page: Math.floor(index / 9) + 1,
-      slot: index % 9,
-    },
-    source_file: 'shitz-creek-cards.pdf',
-  }));
+function normalizeCardImageKey(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\.png$/i, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
-function cropCardFromRenderedPage(
-  sourceCanvas: HTMLCanvasElement,
-  row: number,
-  col: number,
-  rows = GRID_ROWS,
-  cols = GRID_COLS
-): string {
-  const ctx = sourceCanvas.getContext('2d');
-  if (!ctx) throw new Error('Could not get source canvas context');
+function getCardImageCandidates(card: DbCard): string[] {
+  const sourceIndex = Number(card.metadata?.sourceIndex ?? card.card_number - 1);
+  const baseName = getSeedImageBaseName(sourceIndex);
 
-  const rawCardWidth = sourceCanvas.width / cols;
-  const rawCardHeight = sourceCanvas.height / rows;
-
-  const sx = Math.floor(col * rawCardWidth + SLOT_PADDING);
-  const sy = Math.floor(row * rawCardHeight + SLOT_PADDING);
-  const sw = Math.floor(rawCardWidth - SLOT_PADDING * 2);
-  const sh = Math.floor(rawCardHeight - SLOT_PADDING * 2);
-
-  const outCanvas = document.createElement('canvas');
-  outCanvas.width = sw;
-  outCanvas.height = sh;
-
-  const outCtx = outCanvas.getContext('2d');
-  if (!outCtx) throw new Error('Could not get output canvas context');
-
-  outCtx.drawImage(sourceCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
-  return outCanvas.toDataURL('image/png');
+  return [
+    baseName,
+    normalizeCardImageKey(baseName),
+  ];
 }
 
-async function renderPdfPageToCanvas(pdfUrl: string, pageNumber: number, scale = 2): Promise<HTMLCanvasElement> {
-  const loadingTask = getDocument(pdfUrl);
-  const pdf = await loadingTask.promise;
-  const page = await pdf.getPage(pageNumber);
-  const viewport = page.getViewport({ scale });
+function resolveCardImage(card: DbCard): string | undefined {
+  const entries = Object.entries(CARD_IMAGE_MODULES).map(([fullPath, mod]) => {
+    const fileName = fullPath.split('/').pop() || fullPath;
+    return {
+      fileName,
+      moduleUrl: mod.default,
+      normalizedFileName: normalizeCardImageKey(fileName),
+      rawFileName: fileName.replace(/\.png$/i, '').toLowerCase(),
+    };
+  });
 
-  const canvas = document.createElement('canvas');
-  const context = canvas.getContext('2d');
+  const candidates = getCardImageCandidates(card);
+  const match = entries.find(entry =>
+    candidates.includes(entry.normalizedFileName) || candidates.includes(entry.rawFileName)
+  );
 
-  if (!context) throw new Error('Could not get canvas context');
+  return match?.moduleUrl;
+}
 
-  canvas.width = viewport.width;
-  canvas.height = viewport.height;
+function buildCardsManifest(selectedSeeds: ManifestCardSeed[]): DbCard[] {
+  return selectedSeeds.map((seed, manifestIndex) => {
+    const { page, card } = getSeedPageAndCard(seed.sourceIndex);
 
-  await page.render({
-    canvasContext: context,
-    viewport,
-  }).promise;
-
-  return canvas;
+    return {
+      id: `sc-card-src-${String(seed.sourceIndex + 1).padStart(3, '0')}`,
+      game_id: 'shitz-creek',
+      card_type: 'shit-pile',
+      card_name: seed.card_name,
+      card_text: seed.card_text,
+      card_effect: seed.card_effect,
+      card_category: seed.card_category,
+      card_number: manifestIndex + 1,
+      drink_count: 0,
+      metadata: {
+        page,
+        card,
+        slot: card - 1,
+        sourceIndex: seed.sourceIndex,
+        sourceCardNumber: seed.sourceIndex + 1,
+        sourceImageFile: `${getSeedImageBaseName(seed.sourceIndex)}.png`,
+      },
+      source_file: 'shitzcreek-card-images',
+    };
+  });
 }
 
 function parseLocalCardEffect(card: DbCard): ParsedCardAction | null {
@@ -653,7 +682,7 @@ export default function PracticeShitzCreekBoard({
   const [loadingBoard, setLoadingBoard] = useState(true);
   const [showSpaceInfo, setShowSpaceInfo] = useState(false);
 
-  // Local PDF card deck
+  // Local card asset deck
   const [dbCards, setDbCards] = useState<DbCard[]>([]);
   const [dbCardsMap, setDbCardsMap] = useState<Map<string, DbCard>>(new Map());
   const [cardsLoading, setCardsLoading] = useState(true);
@@ -699,7 +728,7 @@ export default function PracticeShitzCreekBoard({
 
   useEffect(() => {
     loadBoardImage();
-    loadCardsFromPdf();
+    loadCardsFromAssets();
   }, []);
 
   useEffect(() => {
@@ -735,42 +764,35 @@ export default function PracticeShitzCreekBoard({
     setLoadingBoard(false);
   };
 
-  // ── Load cards from local PDF ─────────────────────────────────────
+  // ── Load cards from local PNG assets ─────────────────────────────────
 
-  const loadCardsFromPdf = async () => {
+  const loadCardsFromAssets = async () => {
     setCardsLoading(true);
     setCardsError(null);
 
     try {
-      const croppedImages: string[] = [];
-
-      for (const pageNumber of CARD_PAGES) {
-        const pageCanvas = await renderPdfPageToCanvas(cardsPdfUrl, pageNumber, 2);
-
-        for (let row = 0; row < GRID_ROWS; row++) {
-          for (let col = 0; col < GRID_COLS; col++) {
-            const imageUrl = cropCardFromRenderedPage(pageCanvas, row, col);
-            croppedImages.push(imageUrl);
-          }
-        }
-      }
-
-      const manifest = buildCardsManifest();
-
-      if (croppedImages.length !== manifest.length) {
-        throw new Error(
-          `Card image count (${croppedImages.length}) does not match manifest count (${manifest.length})`
-        );
-      }
+      const selectedSeeds = buildRandomCardSeeds();
+      const manifest = buildCardsManifest(selectedSeeds);
 
       const cards: DbCard[] = manifest.map((card, index) => ({
         ...card,
-        image_url: croppedImages[index],
+        image_url: resolveCardImage(card),
         metadata: {
           ...card.metadata,
           imageIndex: index,
+          sourceImageFile: card.metadata?.sourceImageFile,
+          imageCandidates: getCardImageCandidates(card),
         },
       }));
+
+      const missingImages = cards.filter(card => !card.image_url);
+      if (missingImages.length > 0) {
+        throw new Error(
+          `Missing PNG assets for ${missingImages.length} card(s): ${missingImages
+            .map(card => `${card.card_number}. ${card.card_name} (${card.metadata?.sourceImageFile || 'unknown file'})`)
+            .join(', ')}`
+        );
+      }
 
       setDbCards(cards);
 
@@ -778,10 +800,10 @@ export default function PracticeShitzCreekBoard({
       cards.forEach(card => map.set(card.id, card));
       setDbCardsMap(map);
 
-      console.log(`✅ Practice: Loaded ${cards.length} cards from local PDF`);
+      console.log(`✅ Practice: Loaded ${cards.length} randomly selected cards from local PNG assets`);
     } catch (err: any) {
-      console.error('Practice: Failed to load cards from local PDF:', err);
-      setCardsError(err?.message || 'Failed to load cards from PDF');
+      console.error('Practice: Failed to load cards from local PNG assets or build the random 45-card manifest:', err);
+      setCardsError(err?.message || 'Failed to load card PNG assets');
     } finally {
       setCardsLoading(false);
     }
@@ -1421,7 +1443,7 @@ export default function PracticeShitzCreekBoard({
           <div className="text-sm text-red-200 flex-1">
             <span className="font-semibold">Card loading failed:</span> {cardsError}
           </div>
-          <Button variant="link" size="sm" onClick={loadCardsFromPdf} className="text-red-300 underline p-0 h-auto">
+          <Button variant="link" size="sm" onClick={loadCardsFromAssets} className="text-red-300 underline p-0 h-auto">
             Retry
           </Button>
         </div>
