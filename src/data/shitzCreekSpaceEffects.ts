@@ -4,41 +4,85 @@ export type SpaceType =
   | 'shit_pile' | 'safe';
 
 export interface SpaceEffect {
-  type: 'none' | 'paddle_gain' | 'paddle_lose' | 'move_forward' | 'move_back' | 'go_to_start' | 'take_lead' | 'skip_turn' | 'extra_roll' | 'draw_card' | 'swap_random';
+  type:
+    | 'none'
+    | 'paddle_gain'
+    | 'paddle_lose'
+    | 'paddle_gift_right'
+    | 'move_forward'
+    | 'move_back'
+    | 'move_with_player_behind'
+    | 'move_to_previous_shit_pile'
+    | 'go_to_start'
+    | 'go_to_space'
+    | 'take_lead'
+    | 'skip_turn'
+    | 'extra_roll'
+    | 'paddle_lose_and_extra_roll'
+    | 'draw_card'
+    | 'swap_random';
   value?: number;
   text: string;
   emoji: string;
   spaceType?: SpaceType;
   spaceName?: string;
+  targetSpace?: SpaceType;
 }
 
 // 26 spaces to match BOARD_SPACES coordinates in ShitzCreekBoard.tsx
+// Start is the left-middle tile (index 0), then move clockwise.
 export const SPACE_EFFECTS: SpaceEffect[] = [
+  // 0
   { type: 'none', text: 'Start! Begin your journey up Shitz Creek!', emoji: '🚀', spaceType: 'start', spaceName: 'START' },
-  { type: 'paddle_gain', value: 1, text: 'Paddle Shop! +1 Paddle', emoji: '🏪', spaceType: 'paddle_shop', spaceName: 'PADDLE SHOP' },
-  { type: 'none', text: 'Blue space - Safe waters!', emoji: '🔵', spaceType: 'blue', spaceName: 'BLUE' },
-  { type: 'draw_card', text: 'Shit Pile! Draw a card!', emoji: '💩', spaceType: 'shit_pile', spaceName: 'SHIT PILE' },
-  { type: 'move_back', value: 2, text: 'Dog Poo! Go back 2!', emoji: '🐕', spaceType: 'dog_poo', spaceName: 'DOG POO' },
-  { type: 'none', text: 'Green space - Smooth sailing!', emoji: '🟢', spaceType: 'green', spaceName: 'GREEN' },
-  { type: 'extra_roll', text: 'Blue space - Roll again!', emoji: '🔵', spaceType: 'blue', spaceName: 'BLUE' },
-  { type: 'draw_card', text: 'Shit Pile! Draw a card!', emoji: '💩', spaceType: 'shit_pile', spaceName: 'SHIT PILE' },
-  { type: 'none', text: 'Crossing - Safe checkpoint!', emoji: '🚧', spaceType: 'crossing', spaceName: 'CROSSING' },
-  { type: 'paddle_lose', value: 1, text: 'Red space - Lost a paddle! -1', emoji: '🔴', spaceType: 'red', spaceName: 'RED' },
-  { type: 'skip_turn', text: 'Sewer! Skip next turn!', emoji: '🕳️', spaceType: 'sewer', spaceName: 'SEWER' },
-  { type: 'draw_card', text: 'Shit Pile! Draw a card!', emoji: '💩', spaceType: 'shit_pile', spaceName: 'SHIT PILE' },
-  { type: 'move_forward', value: 2, text: 'Green space - Forward 2!', emoji: '🟢', spaceType: 'green', spaceName: 'GREEN' },
-  { type: 'move_back', value: 3, text: 'Shitfaced! Go back 3!', emoji: '🥴', spaceType: 'shitfaced', spaceName: 'SHITFACED' },
-  { type: 'paddle_gain', value: 1, text: 'Blue space - Found a paddle! +1', emoji: '🔵', spaceType: 'blue', spaceName: 'BLUE' },
-  { type: 'draw_card', text: 'Shit Pile! Draw a card!', emoji: '💩', spaceType: 'shit_pile', spaceName: 'SHIT PILE' },
-  { type: 'none', text: 'Green space - Rest here.', emoji: '🟢', spaceType: 'green', spaceName: 'GREEN' },
-  { type: 'swap_random', text: 'Red - Swap with a random player!', emoji: '🔴', spaceType: 'red', spaceName: 'RED' },
-  { type: 'paddle_gain', value: 1, text: 'Paddle Shop! +1 Paddle', emoji: '🏪', spaceType: 'paddle_shop', spaceName: 'PADDLE SHOP' },
-  { type: 'draw_card', text: 'Shit Pile! Draw a card!', emoji: '💩', spaceType: 'shit_pile', spaceName: 'SHIT PILE' },
-  { type: 'none', text: 'Crossing - Safe checkpoint!', emoji: '🚧', spaceType: 'crossing', spaceName: 'CROSSING' },
-  { type: 'move_back', value: 2, text: 'Dog Poo! Go back 2!', emoji: '🐕', spaceType: 'dog_poo', spaceName: 'DOG POO' },
-  { type: 'none', text: 'Blue space - Calm waters.', emoji: '🔵', spaceType: 'blue', spaceName: 'BLUE' },
-  { type: 'draw_card', text: 'Shit Pile! Draw a card!', emoji: '💩', spaceType: 'shit_pile', spaceName: 'SHIT PILE' },
-  { type: 'extra_roll', text: 'Blue space - Final push! Roll again!', emoji: '🔵', spaceType: 'blue', spaceName: 'BLUE' },
+  // 1
+  { type: 'move_forward', value: 2, text: 'Keep moving forward 2 spaces.', emoji: '⏩', spaceType: 'red', spaceName: 'FORWARD 2' },
+  // 2
+  { type: 'draw_card', text: 'Pile of poo! Draw a Shit Pile card.', emoji: '💩', spaceType: 'shit_pile', spaceName: 'SHIT PILE' },
+  // 3
+  { type: 'move_back', value: 1, text: 'You got shit-faced. Go back 1 space.', emoji: '🥴', spaceType: 'shitfaced', spaceName: 'SHITFACED' },
+  // 4
+  { type: 'go_to_start', text: 'Return to the start.', emoji: '↩️', spaceType: 'yellow', spaceName: 'RETURN TO START' },
+  // 5
+  { type: 'draw_card', text: 'Pile of poo! Draw a Shit Pile card.', emoji: '💩', spaceType: 'shit_pile', spaceName: 'SHIT PILE' },
+  // 6
+  { type: 'move_back', value: 1, text: 'Shitz Creek Crossing bridge. Fall back 1 space.', emoji: '🌉', spaceType: 'crossing', spaceName: 'SHIT CREEK CROSSING' },
+  // 7
+  { type: 'move_forward', value: 2, text: 'Move ahead 2 spaces.', emoji: '⏩', spaceType: 'green', spaceName: 'AHEAD 2' },
+  // 8
+  { type: 'move_back', value: 2, text: 'You stink. Move back 2 spaces.', emoji: '⬅️', spaceType: 'blue', spaceName: 'BACK 2' },
+  // 9
+  { type: 'paddle_lose_and_extra_roll', value: 1, text: 'Give up 1 paddle and roll again.', emoji: '🛶', spaceType: 'paddle_shop', spaceName: 'PADDLE SHOP' },
+  // 10
+  { type: 'draw_card', text: 'Pile of poo! Draw a Shit Pile card.', emoji: '💩', spaceType: 'shit_pile', spaceName: 'SHIT PILE' },
+  // 11
+  { type: 'take_lead', text: 'Move 1 space in front of the leader.', emoji: '👑', spaceType: 'green', spaceName: 'IN FRONT OF LEADER' },
+  // 12
+  { type: 'move_back', value: 2, text: 'Move back 2 spaces.', emoji: '⬅️', spaceType: 'red', spaceName: 'BACK 2' },
+  // 13
+  { type: 'go_to_start', text: 'Shitty day. Return to start.', emoji: '↩️', spaceType: 'yellow', spaceName: 'RETURN TO START' },
+  // 14
+  { type: 'move_forward', value: 2, text: 'Move forward 2 spaces.', emoji: '⏩', spaceType: 'blue', spaceName: 'FORWARD 2' },
+  // 15
+  { type: 'move_with_player_behind', value: 1, text: 'Move back with the player behind you.', emoji: '👥', spaceType: 'green', spaceName: 'MOVE BACK WITH PLAYER' },
+  // 16
+  { type: 'draw_card', text: 'Pile of poo! Draw a Shit Pile card.', emoji: '💩', spaceType: 'shit_pile', spaceName: 'SHIT PILE' },
+  // 17
+  { type: 'go_to_space', text: 'Return to the paddle shop.', emoji: '🏪', spaceType: 'yellow', spaceName: 'RETURN TO PADDLE SHOP', targetSpace: 'paddle_shop' },
+  // 18
+  { type: 'move_back', value: 2, text: 'Sewer is backed up. Move back 2 spaces.', emoji: '🕳️', spaceType: 'sewer', spaceName: 'BACKED UP SEWER' },
+  // 19
+  { type: 'move_forward', value: 2, text: 'Move ahead 2 spaces.', emoji: '⏩', spaceType: 'red', spaceName: 'AHEAD 2' },
+  // 20
+  { type: 'draw_card', text: 'Pile of poo! Draw a Shit Pile card.', emoji: '💩', spaceType: 'shit_pile', spaceName: 'SHIT PILE' },
+  // 21
+  { type: 'paddle_gift_right', value: 1, text: 'Lose 1 paddle to your right.', emoji: '🎁', spaceType: 'green', spaceName: 'LOSE PADDLE RIGHT' },
+  // 22
+  { type: 'skip_turn', text: 'Beaver Dam. Lose a turn.', emoji: '🦫', spaceType: 'yellow', spaceName: 'BEAVER DAM' },
+  // 23
+  { type: 'move_to_previous_shit_pile', text: 'Move back to the last Shit Pile.', emoji: '↪️', spaceType: 'blue', spaceName: 'BACK TO LAST SHIT PILE' },
+  // 24
+  { type: 'go_to_space', text: 'Return to Shitz Creek Crossing.', emoji: '🌉', spaceType: 'red', spaceName: 'RETURN TO CROSSING', targetSpace: 'crossing' },
+  // 25
   { type: 'none', text: 'Finish! Need 2 paddles to win!', emoji: '🏁', spaceType: 'finish', spaceName: 'FINISH' },
 ];
 
@@ -71,6 +115,16 @@ export function findClosestSpaceOfType(fromIndex: number, spaceType: SpaceType):
   return closestIdx >= 0 ? closestIdx : fromIndex;
 }
 
+export function findPreviousSpaceOfType(fromIndex: number, spaceType: SpaceType): number {
+  for (let i = fromIndex - 1; i >= 0; i--) {
+    if (SPACE_EFFECTS[i].spaceType === spaceType) return i;
+  }
+  for (let i = SPACE_EFFECTS.length - 1; i >= fromIndex; i--) {
+    if (SPACE_EFFECTS[i].spaceType === spaceType) return i;
+  }
+  return fromIndex;
+}
+
 export const getSpaceColor = (effect: SpaceEffect): string => {
   const st = effect.spaceType;
   if (st) {
@@ -78,6 +132,7 @@ export const getSpaceColor = (effect: SpaceEffect): string => {
       case 'start': return 'bg-emerald-500/70';
       case 'finish': return 'bg-emerald-600/70';
       case 'blue': return 'bg-blue-500/70';
+      case 'yellow': return 'bg-yellow-500/70';
       case 'green': return 'bg-green-500/70';
       case 'red': return 'bg-red-500/70';
       case 'shit_pile': return 'bg-amber-700/80';
@@ -92,12 +147,17 @@ export const getSpaceColor = (effect: SpaceEffect): string => {
   switch (effect.type) {
     case 'paddle_gain': return 'bg-green-500/70';
     case 'paddle_lose': return 'bg-red-500/70';
+    case 'paddle_gift_right': return 'bg-pink-500/70';
     case 'move_forward': return 'bg-blue-500/70';
     case 'move_back': return 'bg-orange-500/70';
+    case 'move_with_player_behind': return 'bg-orange-600/70';
+    case 'move_to_previous_shit_pile': return 'bg-amber-800/70';
+    case 'go_to_space': return 'bg-sky-500/70';
     case 'go_to_start': return 'bg-purple-500/70';
     case 'take_lead': return 'bg-yellow-500/70';
     case 'skip_turn': return 'bg-gray-500/70';
     case 'extra_roll': return 'bg-cyan-500/70';
+    case 'paddle_lose_and_extra_roll': return 'bg-indigo-500/70';
     case 'draw_card': return 'bg-amber-600/70';
     case 'swap_random': return 'bg-pink-500/70';
     default: return 'bg-white/30';

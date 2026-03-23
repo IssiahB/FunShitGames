@@ -14,6 +14,7 @@ import {
   ParsedCardAction,
   findNextSpaceOfType,
   findClosestSpaceOfType,
+  findPreviousSpaceOfType,
   SpaceType,
 } from '@/data/shitzCreekSpaceEffects';
 import ShitzCreekDeckTracker from '@/components/lobby/ShitzCreekDeckTracker';
@@ -816,10 +817,16 @@ export default function PracticeShitzCreekBoard({
     return colors[index % colors.length];
   };
 
-  const getPlayerToRight = (): string | null => {
-    const idx = players.findIndex(p => p.player_id === currentPlayer?.player_id);
+  const getPlayerToRightOf = (playerId: string): string | null => {
+    const idx = players.findIndex(p => p.player_id === playerId);
     if (idx < 0 || players.length < 2) return null;
     return players[(idx + 1) % players.length].player_id;
+  };
+
+  const getPlayerToRight = (): string | null => {
+    const playerId = currentPlayer?.player_id;
+    if (!playerId) return null;
+    return getPlayerToRightOf(playerId);
   };
 
   const getClosestPlayer = (): string | null => {
@@ -862,7 +869,7 @@ export default function PracticeShitzCreekBoard({
           positions: newPositions,
           paddles: newPaddles,
           needsCard: false,
-          message: 'You skipped this yellow (Shit Pile) space!',
+          message: 'You skipped this Shit Pile space!',
         };
       }
 
@@ -875,14 +882,51 @@ export default function PracticeShitzCreekBoard({
             newPaddles[playerId] = Math.max(0, (newPaddles[playerId] || 1) - (effect.value || 1));
           }
           break;
+        case 'paddle_gift_right': {
+          const rightPlayerId = getPlayerToRightOf(playerId);
+          const amount = effect.value || 1;
+          if (rightPlayerId && (newPaddles[playerId] || 0) > 0) {
+            const transfer = Math.min(amount, newPaddles[playerId] || 0);
+            newPaddles[playerId] = Math.max(0, (newPaddles[playerId] || 0) - transfer);
+            newPaddles[rightPlayerId] = (newPaddles[rightPlayerId] || 1) + transfer;
+            msg = `Lost ${transfer} paddle${transfer === 1 ? '' : 's'} to ${players.find(p => p.player_id === rightPlayerId)?.player_name || 'the player on your right'}.`;
+          }
+          break;
+        }
         case 'move_forward':
           newPositions[playerId] = Math.min(FINISH_SPACE, (newPositions[playerId] || 0) + (effect.value || 2));
           break;
         case 'move_back':
           newPositions[playerId] = Math.max(0, (newPositions[playerId] || 0) - (effect.value || 2));
           break;
+        case 'move_with_player_behind': {
+          const spaces = effect.value || 1;
+          const myPos = newPositions[playerId] || 0;
+          newPositions[playerId] = Math.max(0, myPos - spaces);
+
+          const behindPlayers = players
+            .filter(p => p.player_id !== playerId)
+            .map(p => ({ id: p.player_id, pos: newPositions[p.player_id] || 0 }))
+            .filter(p => p.pos < myPos)
+            .sort((a, b) => b.pos - a.pos);
+
+          const behindPlayer = behindPlayers[0];
+          if (behindPlayer) {
+            newPositions[behindPlayer.id] = Math.max(0, (newPositions[behindPlayer.id] || 0) - spaces);
+            msg = `You and ${players.find(p => p.player_id === behindPlayer.id)?.player_name || 'the player behind you'} moved back ${spaces} space${spaces === 1 ? '' : 's'}.`;
+          }
+          break;
+        }
+        case 'move_to_previous_shit_pile':
+          newPositions[playerId] = findPreviousSpaceOfType(newPositions[playerId] || 0, 'shit_pile');
+          break;
         case 'go_to_start':
           newPositions[playerId] = 0;
+          break;
+        case 'go_to_space':
+          if (effect.targetSpace) {
+            newPositions[playerId] = findClosestSpaceOfType(newPositions[playerId] || 0, effect.targetSpace);
+          }
           break;
         case 'take_lead': {
           const maxPos = Math.max(...Object.values(newPositions).map(p => p || 0));
@@ -894,6 +938,11 @@ export default function PracticeShitzCreekBoard({
         case 'skip_turn':
           return { positions: newPositions, paddles: newPaddles, needsCard: false, message: msg, skipTurn: true };
         case 'extra_roll':
+          return { positions: newPositions, paddles: newPaddles, needsCard: false, message: msg, extraRoll: true };
+        case 'paddle_lose_and_extra_roll':
+          if (newPaddles[playerId] > 0) {
+            newPaddles[playerId] = Math.max(0, (newPaddles[playerId] || 1) - (effect.value || 1));
+          }
           return { positions: newPositions, paddles: newPaddles, needsCard: false, message: msg, extraRoll: true };
         case 'swap_random': {
           const otherPlayers = players.filter(p => p.player_id !== playerId);
@@ -1135,7 +1184,7 @@ export default function PracticeShitzCreekBoard({
 
         case 'skip_yellow':
           sy[playerId] = true;
-          setMessage('You can skip the next yellow (Shit Pile) space!');
+          setMessage('You can skip the next Shit Pile space!');
           break;
 
         case 'move_both_to_space': {
@@ -1466,10 +1515,10 @@ export default function PracticeShitzCreekBoard({
         </div>
       )}
 
-      {/* Skip-yellow token indicator */}
+      {/* Skip-shit-pile token indicator */}
       {currentPlayer && skipYellow[currentPlayer.player_id] && (
         <div className="bg-yellow-600/40 border border-yellow-500/50 rounded-lg p-2 mb-3 text-center text-yellow-200 text-sm flex items-center justify-center gap-2">
-          <span>🛡️</span> Skip Yellow Space token active!
+          <span>🛡️</span> Skip Shit Pile token active!
         </div>
       )}
 
